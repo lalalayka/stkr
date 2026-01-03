@@ -13,11 +13,8 @@ struct ImageTile: View {
     let imageSelection: ImageSelection
     let index: Int
     @Binding var activeTileId: String?
-    let isDragEnabled: Bool
     let onReplace: () -> Void
     let onRemove: () -> Void
-    let onLongPress: () -> Void
-    let onDragEnd: () -> Void
     
     @State private var uiImage: UIImage?
     @State private var isLoading = true
@@ -40,9 +37,25 @@ struct ImageTile: View {
                 Color(.systemGray4)
             }
             
+            // Drag handle (visible when overlay is hidden)
+            if !showActions {
+                HStack {
+                    Spacer()
+                    Image(systemName: "line.3.horizontal")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .padding(16)
+                }
+            }
+            
             // Overlay with action buttons
             if showActions {
                 Color.black.opacity(0.4)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            activeTileId = nil
+                        }
+                    }
                 
                 HStack(spacing: 0) {
                     Spacer()
@@ -83,14 +96,10 @@ struct ImageTile: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .aspectRatio(imageSelection.aspectRatio, contentMode: .fit)
-//        .clipped()
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
                 activeTileId = (activeTileId == imageSelection.id) ? nil : imageSelection.id
             }
-        }
-        .onLongPressGesture(minimumDuration: 0.5) {
-            onLongPress()
         }
         .onAppear {
             loadImage()
@@ -135,11 +144,8 @@ struct ImageTile: View {
         imageSelection: selection,
         index: 0,
         activeTileId: $activeTileId,
-        isDragEnabled: false,
         onReplace: { print("Replace") },
-        onRemove: { print("Remove") },
-        onLongPress: { print("Long Press") },
-        onDragEnd: { print("Drag End") }
+        onRemove: { print("Remove") }
     )
     .padding()
 }

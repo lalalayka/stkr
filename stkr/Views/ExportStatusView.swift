@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 enum ExportStatus: Equatable {
     case exporting
@@ -64,6 +65,19 @@ struct ExportStatusView: View {
             .padding(32)
         }
         .onChange(of: status) { oldValue, newValue in
+            // Trigger haptic feedback
+            switch newValue {
+            case .exporting:
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+            case .success:
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.success)
+            case .failure:
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.error)
+            }
+            
             // Auto-dismiss when status changes to success or failure
             switch newValue {
             case .success:

@@ -7,7 +7,14 @@
 
 import SwiftUI
 import Combine
-import UniformTypeIdentifiers
+
+private struct TileFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
 
 /// Canvas: Reorderable list of selected images with drag-and-drop support
 struct Canvas: View {
@@ -15,7 +22,9 @@ struct Canvas: View {
     @State private var showPhotoPicker = false
     @State private var replaceAtIndex: Int?
     @State private var activeTileId: String?
-    @State private var dragEnabledForId: String?
+    @State private var tileFrames: [String: CGRect] = [:]
+    @State private var draggingId: String?
+    @State private var lastReorderTargetId: String?
     
     var body: some View {
         GeometryReader { geometry in
@@ -24,40 +33,63 @@ struct Canvas: View {
             
             VStack(spacing: scaledSpacing) {
                 ForEach(Array(viewModel.state.images.enumerated()), id: \.element.id) { index, imageSelection in
-                    ImageTile(
-                        imageSelection: imageSelection,
-                        index: index,
-                        activeTileId: $activeTileId,
-                        isDragEnabled: dragEnabledForId == imageSelection.id,
-                        onReplace: {
-                            replaceAtIndex = index
-                            showPhotoPicker = true
-                        },
-                        onRemove: {
-                            viewModel.removeImage(at: index)
-                        },
-                        onLongPress: {
-                            // Haptic feedback
-                            let impact = UIImpactFeedbackGenerator(style: .medium)
-                            impact.impactOccurred()
-                            dragEnabledForId = imageSelection.id
-                        },
-                        onDragEnd: {
-                            dragEnabledForId = nil
+                    ZStack {
+                        ImageTile(
+                            imageSelection: imageSelection,
+                            index: index,
+                            activeTileId: $activeTileId,
+                            onReplace: {
+                                replaceAtIndex = index
+                                showPhotoPicker = true
+                            },
+                            onRemove: {
+                                viewModel.removeImage(at: index)
+                            }
+                        )
+                        
+                        // Invisible draggable overlay on the right side (where grabber is)
+                        HStack {
+                            Spacer()
+                            Color.clear
+                                .frame(width: 76, height: 76)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    // Close overlay without stealing the drag session.
+                                    activeTileId = nil
+                                }
+                                .gesture(
+                                    DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
+                                        .onChanged { value in
+                                            if draggingId == nil {
+                                                draggingId = imageSelection.id
+                                            }
+                                            activeTileId = nil
+                                            handleReorder(location: value.location, draggedId: imageSelection.id)
+                                        }
+                                        .onEnded { _ in
+                                            draggingId = nil
+                                            lastReorderTargetId = nil
+                                        }
+                                )
+                        }
+                    }
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear
+                                .preference(
+                                    key: TileFramePreferenceKey.self,
+                                    value: [imageSelection.id: proxy.frame(in: .named("canvas"))]
+                                )
                         }
                     )
-                    .opacity(dragEnabledForId == imageSelection.id ? 0.5 : 1.0)
-                    .onDrag {
-                        NSItemProvider(object: imageSelection.id as NSString)
-                    }
-                    .onDrop(of: [.text], delegate: ImageDropDelegate(
-                        destinationIndex: index,
-                        viewModel: viewModel
-                    ))
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.width * (16.0 / 9.0))
             .background(Color.black)
+            .coordinateSpace(name: "canvas")
+            .onPreferenceChange(TileFramePreferenceKey.self) { frames in
+                tileFrames = frames
+            }
         }
         .sheet(isPresented: $showPhotoPicker) {
             if let replaceIndex = replaceAtIndex {
@@ -80,30 +112,26 @@ struct Canvas: View {
             }
         }
     }
-}
-
-// MARK: - Drop Delegate for reordering
-struct ImageDropDelegate: DropDelegate {
-    let destinationIndex: Int
-    @ObservedObject var viewModel: CompositionViewModel
     
-    func performDrop(info: DropInfo) -> Bool {
-        guard let item = info.itemProviders(for: [.text]).first else { return false }
-        
-        item.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { (data, error) in
-            guard let data = data as? Data,
-                  let draggedId = String(data: data, encoding: .utf8) else { return }
-            
-            Task { @MainActor in
-                guard let sourceIndex = viewModel.state.images.firstIndex(where: { $0.id == draggedId }),
-                      sourceIndex != destinationIndex else { return }
-                
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    viewModel.moveImage(from: sourceIndex, to: destinationIndex)
-                }
-            }
+    private func handleReorder(location: CGPoint, draggedId: String) {
+        guard let sourceIndex = viewModel.state.images.firstIndex(where: { $0.id == draggedId }) else {
+            return
         }
-        return true
+        guard let targetId = tileFrames.first(where: { $0.value.contains(location) })?.key else {
+            return
+        }
+        if targetId == lastReorderTargetId {
+            return
+        }
+        lastReorderTargetId = targetId
+        guard let targetIndex = viewModel.state.images.firstIndex(where: { $0.id == targetId }),
+              targetIndex != sourceIndex else {
+            return
+        }
+        
+        withAnimation(.easeInOut(duration: 0.15)) {
+            viewModel.moveImage(from: sourceIndex, to: targetIndex)
+        }
     }
 }
 
